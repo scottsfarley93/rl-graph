@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from __future__ import print_function
 
 """
 Simulate navigation along a road graph
@@ -36,12 +37,13 @@ import matplotlib.lines as mlines
 import osmnx as ox
 import pprint
 
-HOPS = 5
 
-print "imported libraries"
 
-def loadGraph():
-    G = ox.graph_from_bbox(37.79, 37.78, -122.41, -122.43, network_type='drive')
+print( "imported libraries")
+
+def loadGraph(filename):
+    print(filename)
+    G = networkx.read_gpickle(filename)
     for node in G.nodes:
         nodeAttr = G.node[node]
         G.node[node]['p'] = (nodeAttr['x'], nodeAttr['y'])
@@ -56,10 +58,9 @@ class GraphEnv(gym.Env):
 
     metadata = {'render.modes': ['human']}
 
-    def __init__(self):
+    def __init__(self, world, isStatic=False, start_node=None, facing=0, target_node=None, HOPS=5):
         self.__version__ = "0.1.0"
-        print("Navigation Environment - Version {}".format(self.__version__))
-        self.graph = self.getWorldGraph()
+        print("Navigation Environment - {} - Version {}".format(world, self.__version__))
 
         self.current_episode = 0
         self.current_step = 0
@@ -80,10 +81,18 @@ class GraphEnv(gym.Env):
         }
 
         self.actions_list = list(self.action_dict.keys())
+        self.world = world
+        self.graph = self.getWorldGraph(world)
+        self.staticEnv = isStatic
+        self.start_node = start_node
+        self.target_node = target_node
+        self.HOPS = HOPS
+        self.facing = facing
+        self.centrality = networkx.betweenness_centrality(self.graph)
 
-    def getWorldGraph(self):
+    def getWorldGraph(self, world):
         ## TODO: the graph should come from the real world here
-        simpleGraph = loadGraph()
+        simpleGraph = loadGraph(world)
         return simpleGraph
 
     def step(self, action):
@@ -124,11 +133,17 @@ class GraphEnv(gym.Env):
         return ob, reward, done, {}
 
     def reset(self):
-        self.start_node = random.choice(list(self.graph.nodes))
-        self.target_node = self.get_target_node(self.start_node, HOPS)
+        print ("Environment reset")
+        if not self.staticEnv: ## objective is different on every episode
+            self.start_node = random.choice(list(self.graph.nodes))
+            self.target_node = self.get_target_node(self.start_node, self.HOPS)
+            self.facing = random.choice(range(-180, 181)) ## random start angle
+        ## else, the environment graph + start + target nodes are always the same
+        assert self.start_node is not None
+        assert self.target_node is not None
+        assert self.graph is not None
         self.current_episode += 1
         self.current_step = 0
-        self.facing = random.choice(range(0, 360)) ## random start angle
         self.current_node = self.start_node
         self.start_position = self.graph.node[self.start_node]['p']
         self.end_position = self.graph.node[self.target_node]['p']
@@ -143,10 +158,7 @@ class GraphEnv(gym.Env):
 
         self.distance_traveled = 0
         self.geo_distance_to_goal = self.getGeoDistance(self.start_position, self.end_position)
-        # print "reset environment to:"
-        # print "\tStart Node: ", self.start_node, "(", self.start_position, ")"
-        # print "\tEnd Node: ", self.target_node, "(", self.end_position, ")"
-        # print "\tStart Direction: ", self.facing
+
         return self._get_state()
 
     def get_target_node(self, start_node, hops):
@@ -302,11 +314,9 @@ class GraphEnv(gym.Env):
         angle = thisAction['angle']
 
         if destination is None: ## there are no connections given this action
-            # print "\t --> Action blocked."
             self.action_blocked = True
             return ## don't do anything
         else: ## connection is possible, go there
-            # print "Took Action: ", self.actions_list[action]
             self.action_blocked = False
             self.move_to_node(destination, angle)
 
@@ -345,7 +355,7 @@ class GraphEnv(gym.Env):
             action_obs = self.get_edge_obs(self.current_node, destination)
             angle = action['angle']
             if angle is None:
-                angle = -9999
+                angle = -181
             action_obs.append(angle)
             nextAttrs = nextAttrs + action_obs
         return [angle_to_goal, geoDistanceTravelled, navigatedDistance, distanceToGoal, numNeighbors] + nextAttrs
@@ -361,24 +371,25 @@ class GraphEnv(gym.Env):
             try:
                 distance = edge['length'];
             except:
-                distance = -9999
+                distance = -1
             try:
                 highway = self.highwayClass2Number(edge['highway']);
             except:
-                highway = -9999
+                highway = -1
             # try:
             #     oneway = int(edge['oneway']);
             # except:
             #     oneway = False
-            attrs = attrs + [distance, highway]
+            bc = self.centrality[nodeB]
+            attrs = attrs + [distance, highway, bc]
         else:
-            attrs = attrs + [-9999, -9999]
+            attrs = attrs + [-1, -1, -1]
         return attrs
 
 
     def _is_episode_finished(self):
         if  self.current_node == self.target_node:
-            print "reached goal!"
+            print ("\nreached goal!\n")
             return True
         elif self.cum_reward < -10000:
             return True
@@ -403,10 +414,7 @@ class GraphEnv(gym.Env):
         self.history.append([_lastXY, geoPos])
         self.distance_traveled += _lastDistance
         self.geo_distance_to_goal = self.getGeoDistance(geoPos, self.end_position)
-        # print "Moved to node: ", self.current_node
-        # print "\tX=", self.x
-        # print "\tY=", self.y
-        # print "\tFacing ", self.facing
+
         return
 
     def highwayClass2Number(self, classification):
