@@ -35,20 +35,16 @@ from math import sin, cos, radians, pi
 from matplotlib import collections  as mc
 import matplotlib.lines as mlines
 import osmnx as ox
-import pprint
+from pprint import pprint
 import pyproj
 
 
-
-print( "imported libraries")
-
 def loadGraph(filename):
-    print(filename)
     G = networkx.read_gpickle(filename)
     for node in G.nodes:
         nodeAttr = G.node[node]
         G.node[node]['p'] = (nodeAttr['x'], nodeAttr['y'])
-    return G
+    return G.to_undirected()
 
 
 
@@ -88,7 +84,7 @@ class GraphEnv(gym.Env):
         self.start_node = start_node
         self.target_node = target_node
         self.HOPS = HOPS
-        self.facing = facing + 90
+        self.facing = facing
         self.centrality = networkx.betweenness_centrality(self.graph)
         self.figure = plt.figure()
 
@@ -125,7 +121,6 @@ class GraphEnv(gym.Env):
                  However, official evaluations of your agent are not allowed to
                  use this for learning.
         """
-
         self.current_step += 1
         self._take_action(action)
         reward = self._get_reward()
@@ -158,7 +153,7 @@ class GraphEnv(gym.Env):
         self.action_blocked = False
         self.cum_reward = 0
         self.last_action =  None
-        print ("initially facing: ", self.facing)
+
         self.distance_traveled = 0
         self.geo_distance_to_goal = self.getGeoDistance(self.start_position, self.end_position)
         self.ellipsoid = pyproj.Geod(ellps='WGS84')
@@ -223,19 +218,9 @@ class GraphEnv(gym.Env):
         ## node points
         plt.scatter(xs, ys, color='gray')
 
-        ## direction arrow
-        # x1, y1 = self.angleToPos(self.facing, self.x, self.y, d=0.001)
-        line_length = 0.001
-        x1, y1 = (self.x + line_length*cos(self.facing),self.y + line_length*sin(self.facing))
-        ax = fig.gca()
-        _x = (self.x, x1)
-        _y = (self.y, y1)
-        print ("render facing: ", self.facing)
 
-        l = mlines.Line2D(_x, _y, color='red')
-        ax.add_line(l)
-        plt.gca()
         plt.plot([self.end_position[0]], [self.end_position[1]], 'ro',  color='blue',markersize=12, zorder=10)
+        plt.plot([self.x], [self.y], 'ro',  color='red',markersize=12, zorder=10)
 
 
 
@@ -249,32 +234,33 @@ class GraphEnv(gym.Env):
         return self.graph.node[node]["p"]
 
     def bearing(self, A, B):
-        lat1 = math.radians(A[0])
-        lat2 = math.radians(B[0])
+        lat1 = math.radians(A[1])
+        lat2 = math.radians(B[1])
 
-        diffLong = math.radians(B[1] - A[1])
+        diffLong = math.radians(B[0] - A[0])
 
         x = math.sin(diffLong) * math.cos(lat2)
         y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1)
                 * math.cos(lat2) * math.cos(diffLong))
 
         initial_bearing = math.atan2(x, y)
-        return math.degrees(initial_bearing)
+        return self.normalize_angle(math.degrees(initial_bearing))
 
     def getAngleToNextNode(self, nodeA, nodeB, current_heading):
         posA = self.getNodeXY(nodeA)
         posB = self.getNodeXY(nodeB)
         geo_bearing = self.bearing(posA, posB)
-        heading2node = (geo_bearing - current_heading) * -1;
+        heading2node = (geo_bearing - current_heading);
         next_heading = self.normalize_angle(heading2node)
-        return next_heading
+
+        return round(next_heading)
 
     def getAnglesToNeighbors(self, node, referenceAngle):
         angles = []
         neighbors = self.graph.neighbors(node)
 
         for n in neighbors:
-            d = abs(self.getAngleToNextNode(node, n, referenceAngle))
+            d = self.normalize_angle(self.getAngleToNextNode(node, n, referenceAngle))
             angles.append(d)
         return angles
 
@@ -330,8 +316,6 @@ class GraphEnv(gym.Env):
         thisAction = self.actions[action]
         destination = thisAction['destination']
         angle = thisAction['angle']
-        print("curringly facing: ", self.facing)
-        print("going to travel: ", angle)
 
         self.last_action = thisAction['action']
         if destination is None: ## there are no connections given this action
@@ -418,19 +402,23 @@ class GraphEnv(gym.Env):
             return True
         else:
             return False
+
+
+
     def move_to_node(self, node, facing):
         _node = self.current_node
         self.current_node = node
         geoPos = self.graph.node[node]['p']
         self.x = geoPos[0]
         self.y = geoPos[1]
-        print(_node, node)
-        self.facing =  self.getAngleToNextNode(_node, node, 0)
-        print("facing: ", self.facing)
+        _lastXY = self.graph.node[_node]['p']
+
+        _facing = self.facing
+        self.facing =  self.getAngleToNextNode(_node, node, self.facing)
         self.neighbors = self.getConnections(self.current_node)
         self.actions = self.getActions()
 
-        _lastXY = self.graph.node[_node]['p']
+
         _lastDistance = self.getGeoDistance(_lastXY, geoPos)
         self.last_distance_travelled = _lastDistance
 
@@ -458,26 +446,31 @@ class GraphEnv(gym.Env):
 
     def getActions(self):
         _neighbors = self.getConnections(self.current_node)
-        print ("I'm facing: ", self.facing)
         _connectionAngles = self.getAnglesToNeighbors(self.current_node, self.facing)
-        print (_connectionAngles)
         _allowed_actions = [] ## reset
         for angle in _connectionAngles:
             action = self.actionFromAngle(int(angle)) ## okay
             _allowed_actions.append(action)
 
         _actions = []
-
         idx = 0
+        o = 0
         for action in self.actions_list: ## iterate through all the actions the agent knows how to do
             ## TODO: calculate cost here for reward
             if action in _allowed_actions:
-                result = {"destination" : _neighbors[idx], "angle": _connectionAngles[idx], "action": action}
+
+                result = {"destination" : _neighbors[idx], "angle": _connectionAngles[idx], "action": action, 'action_number': o}
                 idx += 1
             else:
-                result = {"destination": None, "angle": None, "action": action}
+                result = {"destination": None, "angle": None, "action": action, 'action_number': o}
             _actions.append(result)
+            o += 1
         return _actions
 
+    def _moveToNode(self, nodeID):
+        self.current_node  = nodeID
+        self.x, self.y = self.getNodeXY(self.current_node)
+
+
     def normalize_angle(self, angle):
-        return ((angle + 360) % 360) - 90 
+        return ((angle + 360) % 360)
