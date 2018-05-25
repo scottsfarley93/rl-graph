@@ -36,6 +36,7 @@ from matplotlib import collections  as mc
 import matplotlib.lines as mlines
 import osmnx as ox
 import pprint
+import pyproj
 
 
 
@@ -87,8 +88,9 @@ class GraphEnv(gym.Env):
         self.start_node = start_node
         self.target_node = target_node
         self.HOPS = HOPS
-        self.facing = facing
+        self.facing = facing + 90
         self.centrality = networkx.betweenness_centrality(self.graph)
+        self.figure = plt.figure()
 
     def getWorldGraph(self, world):
         ## TODO: the graph should come from the real world here
@@ -133,11 +135,11 @@ class GraphEnv(gym.Env):
         return ob, reward, done, {}
 
     def reset(self):
-        print ("Environment reset")
+        print ("Environment reset for episode " , self.current_episode)
         if not self.staticEnv: ## objective is different on every episode
             self.start_node = random.choice(list(self.graph.nodes))
             self.target_node = self.get_target_node(self.start_node, self.HOPS)
-            self.facing = random.choice(range(-180, 181)) ## random start angle
+            self.facing = random.choice(range(0, 360)) ## random start angle
         ## else, the environment graph + start + target nodes are always the same
         assert self.start_node is not None
         assert self.target_node is not None
@@ -155,9 +157,12 @@ class GraphEnv(gym.Env):
         self.last_distance_travelled = 0
         self.action_blocked = False
         self.cum_reward = 0
-
+        self.last_action =  None
+        print ("initially facing: ", self.facing)
         self.distance_traveled = 0
         self.geo_distance_to_goal = self.getGeoDistance(self.start_position, self.end_position)
+        self.ellipsoid = pyproj.Geod(ellps='WGS84')
+
 
         return self._get_state()
 
@@ -188,7 +193,7 @@ class GraphEnv(gym.Env):
             for i in range(0, len(labs)):
                 fig.text(xs[i], ys[i], labs[i])
 
-        plt.title("Iteration: " + str(self.current_step) + " (epoch=" + str(self.current_episode) + ")")
+        plt.title("action = {} blocked = {}".format(self.last_action, self.action_blocked))
 
         ## path history
         for segment in self.history:
@@ -219,86 +224,99 @@ class GraphEnv(gym.Env):
         plt.scatter(xs, ys, color='gray')
 
         ## direction arrow
-        x1, y1 = self.angleToPos(self.facing, self.x, self.y, d=0.001)
+        # x1, y1 = self.angleToPos(self.facing, self.x, self.y, d=0.001)
+        line_length = 0.001
+        x1, y1 = (self.x + line_length*cos(self.facing),self.y + line_length*sin(self.facing))
         ax = fig.gca()
         _x = (self.x, x1)
         _y = (self.y, y1)
+        print ("render facing: ", self.facing)
 
         l = mlines.Line2D(_x, _y, color='red')
         ax.add_line(l)
+        plt.gca()
         plt.plot([self.end_position[0]], [self.end_position[1]], 'ro',  color='blue',markersize=12, zorder=10)
 
 
 
-    def angleToPos(self, theta, x0, y0, d=0.001):
-        theta_rad = radians(theta)
-        x1 = (x0 - d*cos(theta_rad))
-        y1 = (y0 - d*sin(theta_rad))
-        return x1, y1
+    # def angleToPos(self, theta, x0, y0, d=0.001):
+    #     theta_rad = radians(theta)
+    #     x1 = (x0 - d*cos(theta_rad))
+    #     y1 = (y0 - d*sin(theta_rad))
+    #     return x1, y1
 
     def getNodeXY(self, node):
         return self.graph.node[node]["p"]
 
-    def getAngleToNextNode(self, nodeA, nodeB):
-        posA = self.getNodeXY(nodeA)
-        posB = self.getNodeXY(nodeB)
-        lat1 = math.radians(posA[0])
-        lat2 = math.radians(posB[0])
+    def bearing(self, A, B):
+        lat1 = math.radians(A[0])
+        lat2 = math.radians(B[0])
 
-        diffLong = math.radians(posB[1] - posA[1])
+        diffLong = math.radians(B[1] - A[1])
 
         x = math.sin(diffLong) * math.cos(lat2)
         y = math.cos(lat1) * math.sin(lat2) - (math.sin(lat1)
                 * math.cos(lat2) * math.cos(diffLong))
 
         initial_bearing = math.atan2(x, y)
-        degs = round(math.degrees(initial_bearing), 1)
-        return degs
+        return math.degrees(initial_bearing)
+
+    def getAngleToNextNode(self, nodeA, nodeB, current_heading):
+        posA = self.getNodeXY(nodeA)
+        posB = self.getNodeXY(nodeB)
+        geo_bearing = self.bearing(posA, posB)
+        heading2node = (geo_bearing - current_heading) * -1;
+        next_heading = self.normalize_angle(heading2node)
+        return next_heading
 
     def getAnglesToNeighbors(self, node, referenceAngle):
         angles = []
         neighbors = self.graph.neighbors(node)
-#         pxs = []
-#         pys = []
-#         for node in neighbors:
-#             p = self.graph.node[node]['p']
-#             pxs.append(p[0])
-#             pys.append(p[1])
-#         plt.scatter(pxs, pys, color='green')
-#         current = self.graph.node[node]['p']
-#         plt.scatter([current[0]], [current[1]], color='red')
-#         plt.show()
+
         for n in neighbors:
-            d = self.getAngleToNextNode(node, n) - referenceAngle
-            if d < -180:
-                d = d + 360
-            if d > 180:
-                d = d - 360
+            d = abs(self.getAngleToNextNode(node, n, referenceAngle))
             angles.append(d)
         return angles
 
     def actionFromAngle(self, angle):
-        if angle == 0:
+        angle = abs(angle)
+        if angle == 0 or angle == 360:
             return "STRAIGHT"
-        elif angle > 0 and angle < 60:
-            return "SLIGHT_LEFT"
-        elif angle >=45 and angle < 120:
-            return "LEFT"
-        elif angle >= 120 and angle < 180:
-            return "HARD_LEFT"
-        elif angle == 180 or angle == -180:
-            return "U_TURN"
-        elif angle > -60 and angle < 0:
+        elif angle < 60:
             return "SLIGHT_RIGHT"
-        elif angle <= -60 and angle > -120:
+        elif angle < 120:
             return "RIGHT"
-        elif angle <= -120 and angle > -180:
+        elif angle < 180:
             return "HARD_RIGHT"
+        elif angle == 180:
+            return "U_TURN"
+        elif angle < 240:
+            return "HARD_LEFT"
+        elif angle < 300:
+            return "LEFT"
+        elif angle < 360:
+            return "SLIGHT_LEFT"
         else:
-            raise ValueError("invalid angle")
+            raise ValueError("INVALID ANGLE")
+        # if angle == 0:
+        #     return "STRAIGHT"
+        # elif angle < 0 and angle > -60:
+        #     return "SLIGHT_LEFT"
+        # elif angle <= -60 and angle > -120:
+        #     return "LEFT"
+        # elif angle <= -120 and angle > -180:
+        #     return "HARD_LEFT"
+        # elif angle == 180 or angle == -180:
+        #     return "U_TURN"
+        # elif angle < 60 and angle > 0:
+        #     return "SLIGHT_RIGHT"
+        # elif angle >= 60 and angle < 120:
+        #     return "RIGHT"
+        # elif angle >= 120 and angle < -180:
+        #     return "HARD_RIGHT"
+        # else:
+        #     raise ValueError("invalid angle")
 
-    def getReferenceAngle(self, oldNode, newNode):
-        return getAngleToNextNode(oldNode, newNode)
 
     def getConnections(self, node):
         self.graph[node].keys()
@@ -312,7 +330,10 @@ class GraphEnv(gym.Env):
         thisAction = self.actions[action]
         destination = thisAction['destination']
         angle = thisAction['angle']
+        print("curringly facing: ", self.facing)
+        print("going to travel: ", angle)
 
+        self.last_action = thisAction['action']
         if destination is None: ## there are no connections given this action
             self.action_blocked = True
             return ## don't do anything
@@ -322,11 +343,11 @@ class GraphEnv(gym.Env):
 
     def _get_reward(self):
         if self.current_node == self.target_node:
-            return 1000
+            return 10000
         if self.action_blocked:
-            return -25
+            return -1000
         else:
-            return 0
+            return 5
 
     def _get_state(self):
         ## state obsveration space at node N
@@ -343,7 +364,8 @@ class GraphEnv(gym.Env):
         ## later:
         ## - time of day
         ## - hourly traffic volume
-        angle_to_goal = self.getAngleToNextNode(self.current_node, self.target_node)
+        # angle_to_goal = self.bearing(self.current_node['p'], self.target_node['p'])
+        angle_to_goal = 0
         geoDistanceTravelled = self.getGeoDistance(self.start_position, [self.x, self.y])
         navigatedDistance = self.distance_traveled
         distanceToGoal = self.geo_distance_to_goal
@@ -358,7 +380,7 @@ class GraphEnv(gym.Env):
                 angle = -181
             action_obs.append(angle)
             nextAttrs = nextAttrs + action_obs
-        return [angle_to_goal, geoDistanceTravelled, navigatedDistance, distanceToGoal, numNeighbors] + nextAttrs
+        return [self.facing, angle_to_goal, geoDistanceTravelled, navigatedDistance, distanceToGoal, numNeighbors] + nextAttrs
 
     def get_edge_obs(self, nodeA, nodeB):
         ##  - distance to next node
@@ -390,6 +412,7 @@ class GraphEnv(gym.Env):
     def _is_episode_finished(self):
         if  self.current_node == self.target_node:
             print ("\nreached goal!\n")
+            raise ValueError("end of episode")
             return True
         elif self.cum_reward < -10000:
             return True
@@ -401,9 +424,9 @@ class GraphEnv(gym.Env):
         geoPos = self.graph.node[node]['p']
         self.x = geoPos[0]
         self.y = geoPos[1]
-
-
-        self.facing = facing
+        print(_node, node)
+        self.facing =  self.getAngleToNextNode(_node, node, 0)
+        print("facing: ", self.facing)
         self.neighbors = self.getConnections(self.current_node)
         self.actions = self.getActions()
 
@@ -435,7 +458,9 @@ class GraphEnv(gym.Env):
 
     def getActions(self):
         _neighbors = self.getConnections(self.current_node)
+        print ("I'm facing: ", self.facing)
         _connectionAngles = self.getAnglesToNeighbors(self.current_node, self.facing)
+        print (_connectionAngles)
         _allowed_actions = [] ## reset
         for angle in _connectionAngles:
             action = self.actionFromAngle(int(angle)) ## okay
@@ -453,3 +478,6 @@ class GraphEnv(gym.Env):
                 result = {"destination": None, "angle": None, "action": action}
             _actions.append(result)
         return _actions
+
+    def normalize_angle(self, angle):
+        return ((angle + 360) % 360) - 90 
