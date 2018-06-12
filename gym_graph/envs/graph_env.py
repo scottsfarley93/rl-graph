@@ -44,7 +44,8 @@ def loadGraph(filename):
     for node in G.nodes:
         nodeAttr = G.node[node]
         G.node[node]['p'] = (nodeAttr['x'], nodeAttr['y'])
-    return G.to_undirected()
+    # return G.to_undirected()
+    return G
 
 
 
@@ -62,9 +63,9 @@ class GraphEnv(gym.Env):
         self.current_episode = 0
         self.current_step = 0
 
-        self.action_space = spaces.Discrete(7) ## seven available turn actions
+        self.action_space = spaces.Discrete(8) ## seven available turn actions
 
-        self.observation_space = spaces.Discrete(2) ## observations are an 8-length vector
+        # self.observation_space = spaces.Discrete(2) ## observations are an 8-length vector
 
         self.action_dict = {
             "STRAIGHT": 0,
@@ -87,6 +88,11 @@ class GraphEnv(gym.Env):
         self.facing = facing
         self.centrality = networkx.betweenness_centrality(self.graph)
         self.figure = plt.figure()
+        self.distance_travelled_log = open("distance_travelled.log.csv", 'w')
+        self.distance_to_go_log = open("distance_to_log.log.csv", 'w')
+        self.state_log = open("state.log.csv", 'w')
+
+
 
     def getWorldGraph(self, world):
         ## TODO: the graph should come from the real world here
@@ -127,10 +133,20 @@ class GraphEnv(gym.Env):
         self.cum_reward += reward
         ob = self._get_state()
         done = self._is_episode_finished()
+        if done and self.current_episode % 10 == 0:
+            self.distance_to_go_log.write(str(self.current_episode) + "," + ",".join(map(str, self.distances_to_goal)) + "\n")
+            self.distance_travelled_log.write(str(self.current_episode) + "," + ",".join(map(str, self.distances_traveled)) + "\n")
+            # plt.subplot(211)
+            # plt.plot(self.distances_to_goal)
+            # plt.title("Distance to goal")
+            # plt.subplot(212)
+            # plt.plot(self.distances_traveled)
+            # plt.title("Distance travelled")
+            # plt.show()
+        self.state_log.write(str(self.current_episode) + "," + str(self.current_step) + "," + self.last_action + "," + str(self.action_blocked) + "," + str(self.cum_reward) + "," + ",".join(map(str, ob)) + "\n")
         return ob, reward, done, {}
 
     def reset(self):
-        print ("Environment reset for episode " , self.current_episode)
         if not self.staticEnv: ## objective is different on every episode
             self.start_node = random.choice(list(self.graph.nodes))
             self.target_node = self.get_target_node(self.start_node, self.HOPS)
@@ -153,6 +169,8 @@ class GraphEnv(gym.Env):
         self.action_blocked = False
         self.cum_reward = 0
         self.last_action =  None
+        self.distances_to_goal = []
+        self.distances_traveled = []
 
         self.distance_traveled = 0
         self.geo_distance_to_goal = self.getGeoDistance(self.start_position, self.end_position)
@@ -172,56 +190,61 @@ class GraphEnv(gym.Env):
         return current_node
 
     def render(self, mode='human', close=False, labels=False):
-        fig = plt.figure(figsize=(10, 10))
-        nodes = list(self.graph.nodes)
-        pts = []
-        labs = []
-        for n in nodes:
-            nodeInfo = self.graph.node[n]
-            pts.append(nodeInfo['p'])
-            labs.append(n)
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-
-        ## labels
-        if False:
-            for i in range(0, len(labs)):
-                fig.text(xs[i], ys[i], labs[i])
-
-        plt.title("action = {} blocked = {}".format(self.last_action, self.action_blocked))
-
-        ## path history
-        for segment in self.history:
-            ax = fig.gca()
-            _x = (segment[0][0], segment[1][0])
-            _y = (segment[0][1], segment[1][1])
-
-            l = mlines.Line2D(_x, _y)
-
-            ax.add_line(l)
-
-        ## connected paths
-        for node in self.graph.nodes:
-
-            _source = self.graph.node[node]['p']
-            _targets = self.graph.neighbors(node)
-            for t in _targets:
-                _target = self.graph.node[t]['p']
-
-                ax = fig.gca()
-                _x = (_source[0], _target[0])
-                _y = (_source[1], _target[1])
-
-                l = mlines.Line2D(_x, _y, color='gray')
-                ax.add_line(l)
-
-        ## node points
-        plt.scatter(xs, ys, color='gray')
-
-
-        plt.plot([self.end_position[0]], [self.end_position[1]], 'ro',  color='blue',markersize=12, zorder=10)
-        plt.plot([self.x], [self.y], 'ro',  color='red',markersize=12, zorder=10)
-
+        return 
+        # if False:
+        #     fig = plt.figure(figsize=(10, 10))
+        #     nodes = list(self.graph.nodes)
+        #     pts = []
+        #     labs = []
+        #     for n in nodes:
+        #         nodeInfo = self.graph.node[n]
+        #         pts.append(nodeInfo['p'])
+        #         labs.append(n)
+        #     xs = [p[0] for p in pts]
+        #     ys = [p[1] for p in pts]
+        #
+        #     ## labels
+        #     if False:
+        #         for i in range(0, len(labs)):
+        #             fig.text(xs[i], ys[i], labs[i])
+        #
+        #     plt.title("{}.{} [action = {} blocked = {}]".format(self.current_episode, self.current_step, self.last_action, self.action_blocked))
+        #
+        #     ## path history
+        #     for segment in self.history:
+        #         ax = fig.gca()
+        #         _x = (segment[0][0], segment[1][0])
+        #         _y = (segment[0][1], segment[1][1])
+        #
+        #         l = mlines.Line2D(_x, _y)
+        #
+        #         ax.add_line(l)
+        #
+        #     ## connected paths
+        #     for node in self.graph.nodes:
+        #
+        #         _source = self.graph.node[node]['p']
+        #         _targets = self.graph.neighbors(node)
+        #         for t in _targets:
+        #             _target = self.graph.node[t]['p']
+        #
+        #             ax = fig.gca()
+        #             _x = (_source[0], _target[0])
+        #             _y = (_source[1], _target[1])
+        #
+        #             l = mlines.Line2D(_x, _y, color='gray')
+        #             ax.add_line(l)
+        #
+        #     ## node points
+        #     plt.scatter(xs, ys, color='gray')
+        #
+        #
+        #     plt.plot([self.end_position[0]], [self.end_position[1]], 'ro',  color='blue',markersize=12, zorder=10)
+        #     plt.plot([self.x], [self.y], 'ro',  color='red',markersize=12, zorder=10)
+        #     render_no = str(int(self.current_episode)) + "_" + str(int(self.current_step))
+        #     f = "renders/{}.png".format(render_no)
+        #     plt.savefig(f)
+        #     plt.close()
 
 
     # def angleToPos(self, theta, x0, y0, d=0.001):
@@ -284,38 +307,22 @@ class GraphEnv(gym.Env):
             return "SLIGHT_LEFT"
         else:
             raise ValueError("INVALID ANGLE")
-        # if angle == 0:
-        #     return "STRAIGHT"
-        # elif angle < 0 and angle > -60:
-        #     return "SLIGHT_LEFT"
-        # elif angle <= -60 and angle > -120:
-        #     return "LEFT"
-        # elif angle <= -120 and angle > -180:
-        #     return "HARD_LEFT"
-        # elif angle == 180 or angle == -180:
-        #     return "U_TURN"
-        # elif angle < 60 and angle > 0:
-        #     return "SLIGHT_RIGHT"
-        # elif angle >= 60 and angle < 120:
-        #     return "RIGHT"
-        # elif angle >= 120 and angle < -180:
-        #     return "HARD_RIGHT"
-        # else:
-        #     raise ValueError("invalid angle")
-
 
     def getConnections(self, node):
         self.graph[node].keys()
         return list(self.graph.neighbors(node))
 
     def getGeoDistance(self, node1, node2):
-        return math.hypot(node2[0] - node2[0], node2[1] - node1[1])
+        return (math.hypot(node2[0] - node2[0], node2[1] - node1[1])*111)
 
     def _take_action(self,action):
+        _old_node = self.current_node
         self.actions = self.getActions()
         thisAction = self.actions[action]
         destination = thisAction['destination']
         angle = thisAction['angle']
+
+
 
         self.last_action = thisAction['action']
         if destination is None: ## there are no connections given this action
@@ -324,14 +331,21 @@ class GraphEnv(gym.Env):
         else: ## connection is possible, go there
             self.action_blocked = False
             self.move_to_node(destination, angle)
+            if self.current_node not in self.graph.neighbors(_old_node):
+                raise AttributeError("Invalid movement!")
 
     def _get_reward(self):
         if self.current_node == self.target_node:
-            return 10000
+            return 10000 - self.current_step*5
         if self.action_blocked:
-            return -1000
+            return -250
         else:
-            return 5
+            base = -1*(self.last_distance_travelled)
+            turn_penalty = 2
+            if self.last_action == "STRAIGHT":
+                return base
+            else:
+                return base*turn_penalty
 
     def _get_state(self):
         ## state obsveration space at node N
@@ -348,9 +362,7 @@ class GraphEnv(gym.Env):
         ## later:
         ## - time of day
         ## - hourly traffic volume
-        # angle_to_goal = self.bearing(self.current_node['p'], self.target_node['p'])
-        angle_to_goal = 0
-        geoDistanceTravelled = self.getGeoDistance(self.start_position, [self.x, self.y])
+        angle_to_goal = self.getAngleToNextNode(self.current_node, self.target_node, 0 ) / 360
         navigatedDistance = self.distance_traveled
         distanceToGoal = self.geo_distance_to_goal
         numNeighbors = len(list(self.graph.neighbors(self.current_node)))
@@ -358,15 +370,21 @@ class GraphEnv(gym.Env):
         actions = self.getActions()
         for action in actions:
             destination = action['destination']
-            action_obs = self.get_edge_obs(self.current_node, destination)
             angle = action['angle']
             if angle is None:
-                angle = -181
-            action_obs.append(angle)
-            nextAttrs = nextAttrs + action_obs
-        return [self.facing, angle_to_goal, geoDistanceTravelled, navigatedDistance, distanceToGoal, numNeighbors] + nextAttrs
+                # angle = -1
+                nextAttrs.append(-1)
+                nextAttrs.append(-1)
+            else:
+                nextAttrs.append(1)
+                nextAttrs.append(self.get_edge_distance(self.current_node, destination))
+            # action_obs.append(angle)
+            # nextAttrs = nextAttrs + action_obs
+        self.distances_to_goal.append(distanceToGoal)
+        self.distances_traveled.append(navigatedDistance)
+        return [self.last_distance_travelled, distanceToGoal, numNeighbors, self.facing / 360, angle_to_goal, angle_to_goal - (self.facing / 360)] + nextAttrs
 
-    def get_edge_obs(self, nodeA, nodeB):
+    def get_edge_distance(self, nodeA, nodeB):
         ##  - distance to next node
         ##  - angle to next node
         ##  - highway class of edge to next node
@@ -374,31 +392,19 @@ class GraphEnv(gym.Env):
         edge = self.graph.get_edge_data(nodeA, nodeB, 0)
         attrs = []
         if edge is not None:
-            try:
-                distance = edge['length'];
-            except:
-                distance = -1
-            try:
-                highway = self.highwayClass2Number(edge['highway']);
-            except:
-                highway = -1
-            # try:
-            #     oneway = int(edge['oneway']);
-            # except:
-            #     oneway = False
-            bc = self.centrality[nodeB]
-            attrs = attrs + [distance, highway, bc]
+            distance = edge['length']
         else:
-            attrs = attrs + [-1, -1, -1]
-        return attrs
+            raise AttributeError("No edge found!")
+        return distance
 
 
     def _is_episode_finished(self):
         if  self.current_node == self.target_node:
             print ("\nreached goal!\n")
-            raise ValueError("end of episode")
             return True
         elif self.cum_reward < -10000:
+            return True
+        elif self.current_step >= 100:
             return True
         else:
             return False
@@ -420,7 +426,7 @@ class GraphEnv(gym.Env):
 
 
         _lastDistance = self.getGeoDistance(_lastXY, geoPos)
-        self.last_distance_travelled = _lastDistance
+        self.last_distance_travelled = self.get_edge_distance(_node, node)
 
         self.history.append([_lastXY, geoPos])
         self.distance_traveled += _lastDistance

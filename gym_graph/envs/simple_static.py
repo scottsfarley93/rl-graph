@@ -17,4 +17,4 @@ print(dirname, graphFile)
 
 class SimpleStaticEnv(GraphEnv):
     def __init__(self):
-        super().__init__(world=graphFile, isStatic=True, start_node=2351399563, facing=0, target_node=342548255)
+        super().__init__(world=graphFile, isStatic=True, start_node=2351399563, facing=0, target_node=65329103)

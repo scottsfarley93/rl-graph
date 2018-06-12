@@ -1,5 +1,9 @@
 from gym.envs.registration import register
 
+register(
+    id='super-simple-static-graph-v0',
+    entry_point='gym_graph.envs:SuperSimpleStaticEnv'
+)
 
 register(
     id='simple-static-graph-v0',
